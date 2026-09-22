@@ -1,0 +1,254 @@
+import io
+import time
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import serial
+
+# spiffs import
+
+# settings
+PORT = "COM3"  
+BAUD = 115200
+
+print(f"Connecting to ESP32 on {PORT}...")
+ser = serial.Serial(PORT, BAUD, timeout=2)
+time.sleep(3)
+
+ser.reset_input_buffer()
+
+print("Requesting saved log file from ESP32...")
+ser.write(b"DUMP\n")
+
+csv_data = []
+start_time = time.time()
+
+while True:
+  line = ser.readline().decode("utf-8", errors="ignore").strip()
+  if not line:
+    if time.time() - start_time > 2 and len(csv_data) > 0:
+      break
+    if time.time() - start_time > 6:
+      break
+    continue
+
+  if "Uptime_s" in line:
+    csv_data.append(line)
+    start_time = time.time()
+  elif line.count(",") == 3:
+    parts = line.split(",")
+    try:
+      [float(p) for p in parts]
+      csv_data.append(line)
+      if len(csv_data) % 100 == 0:
+        print(f"Downloaded {len(csv_data)} rows...")
+      start_time = time.time()
+    except ValueError:
+      pass
+
+ser.close()
+print(
+    f"Import complete ({len(csv_data)} valid rows). Processing dataframe..."
+)
+
+if len(csv_data) <= 1:
+  print("Error: No valid data received from ESP32. Try resetting the board.")
+  exit()
+
+# clean value collumn
+csv_string = "\n".join(csv_data)
+df = pd.read_csv(io.StringIO(csv_string))
+df.columns = df.columns.str.strip()
+
+if len(df) > 10:
+  df = df.iloc[10:].reset_index(drop=True)
+
+# timings
+df_sub = df.copy()
+
+# acceleration section
+print("Generating high-speed acceleration chart...")
+
+plt.style.use("dark_background")
+fig, ax = plt.subplots(figsize=(12, 6))
+
+x = np.arange(len(df_sub))
+y = df_sub["Accel_ms2"]
+
+bar_color = "#1f4e79"
+ax.bar(x, y, width=0.8, color=bar_color, edgecolor="none", alpha=0.95)
+
+# centre graph
+ax.set_xlim(-0.5, len(df_sub) - 0.5)
+
+ymin, ymax = y.min(), y.max()
+margin = (ymax - ymin) * 0.5 if ymax != ymin else 0.5
+ax.set_ylim(ymin - margin, ymax + margin)
+
+mean_val = y.mean()
+
+# fault detection
+for i in range(len(df_sub)):
+  val = y.iloc[i]
+  if val > 11.7 or val < 8.5:
+    text_offset = 0.5 if val >= mean_val else -0.5
+    ax.annotate(
+        "potential fault",
+        xy=(i, val),
+        xytext=(i, val + text_offset),
+        arrowprops=None,  
+        fontsize=9,
+        fontweight="bold",
+        color="white",
+        ha="center",
+        va="center",
+        bbox=dict(
+            boxstyle="round,pad=0.3",
+            facecolor="red",
+            edgecolor="darkred",
+            lw=1.5,
+        ),
+    )
+
+# graph plot
+ax.set_xlabel(
+    "Sample Index (4 Hz High-Speed Log)", fontsize=11, fontweight="bold", color="white"
+)
+ax.set_ylabel(
+    "Acceleration (m/s²)", fontsize=11, fontweight="bold", color="white"
+)
+ax.set_title(
+    "ESP32 Sequential Acceleration Bar Chart (4 Hz Mode)",
+    fontsize=13,
+    fontweight="bold",
+    color="white",
+)
+
+ax.grid(axis="y", linestyle="--", alpha=0.3, color="gray")
+plt.tight_layout()
+plt.show()
+
+# temperature section
+
+print("Generating high-speed temperature chart...")
+
+plt.style.use("dark_background")
+fig, ax = plt.subplots(figsize=(12, 6))
+
+x = np.arange(len(df_sub))
+y = df_sub["Temp_C"]
+
+# fault threshold
+THERMAL_THRESHOLD = 45.0
+
+bar_colors = ["gold" for _ in y]
+ax.bar(x, y, width=0.8, color=bar_colors, edgecolor="none", alpha=0.95)
+
+ax.set_xlim(-0.5, len(df_sub) - 0.5)
+
+ymin, ymax = y.min(), y.max()
+margin = (ymax - ymin) * 0.5 if ymax != ymin else 0.5
+ax.set_ylim(ymin - margin, ymax + margin)
+
+mean_val = y.mean()
+
+# fault detection
+for i in range(len(df_sub)):
+  val = y.iloc[i]
+  if val > THERMAL_THRESHOLD:
+    text_offset = 0.5 if val >= mean_val else -0.5
+    ax.annotate(
+        "potential fault",
+        xy=(i, val),
+        xytext=(i, val + text_offset),
+        arrowprops=None,
+        fontsize=9,
+        fontweight="bold",
+        color="white",
+        ha="center",
+        va="center",
+        bbox=dict(
+            boxstyle="round,pad=0.3",
+            facecolor="red",
+            edgecolor="darkred",
+            lw=1.5,
+        ),
+    )
+
+# graph plot
+ax.set_xlabel(
+    "Sample Index (4 Hz High-Speed Log)", fontsize=11, fontweight="bold", color="white"
+)
+ax.set_ylabel(
+    "Temperature (°C)", fontsize=11, fontweight="bold", color="white"
+)
+ax.set_title(
+    "ESP32 Sequential Temperature Bar Chart (4 Hz Mode)",
+    fontsize=13,
+    fontweight="bold",
+    color="white",
+)
+
+ax.grid(axis="y", linestyle="--", alpha=0.3, color="gray")
+plt.tight_layout()
+plt.show()
+
+# rpm section
+
+print("Generating high-speed RPM chart...")
+
+plt.style.use("dark_background")
+fig, ax = plt.subplots(figsize=(12, 6))
+
+x = np.arange(len(df_sub))
+y = df_sub["RPM"]
+
+bar_colors = ["limegreen" for _ in y]
+ax.bar(x, y, width=0.8, color=bar_colors, edgecolor="none", alpha=0.95)
+
+ax.set_xlim(-0.5, len(df_sub) - 0.5)
+
+ymin, ymax = y.min(), y.max()
+margin = (ymax - ymin) * 0.5 if ymax != ymin else 0.5
+ax.set_ylim(ymin - margin, ymax + margin)
+
+mean_val = y.mean()
+
+# fault detection
+for i in range(len(df_sub)):
+  val = y.iloc[i]
+  if 0 < val < 130:
+    text_offset = 0.5 if val >= mean_val else -0.5
+    ax.annotate(
+        "potential fault",
+        xy=(i, val),
+        xytext=(i, val + text_offset),
+        arrowprops=None,
+        fontsize=9,
+        fontweight="bold",
+        color="white",
+        ha="center",
+        va="center",
+        bbox=dict(
+            boxstyle="round,pad=0.3",
+            facecolor="red",
+            edgecolor="darkred",
+            lw=1.5,
+        ),
+    )
+
+# graph plot
+ax.set_xlabel(
+    "Sample Index (4 Hz High-Speed Log)", fontsize=11, fontweight="bold", color="white"
+)
+ax.set_ylabel("Engine Speed (RPM)", fontsize=11, fontweight="bold", color="white")
+ax.set_title(
+    "ESP32 Sequential RPM Bar Chart (4 Hz Mode)",
+    fontsize=13,
+    fontweight="bold",
+    color="white",
+)
+
+ax.grid(axis="y", linestyle="--", alpha=0.3, color="gray")
+plt.tight_layout()
+plt.show()
