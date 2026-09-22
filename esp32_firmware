@@ -1,0 +1,294 @@
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_INA219.h>
+#include <LittleFS.h>
+
+// OLED DISPLAY
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET    -1
+#define SCREEN_ADDRESS 0x3C
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+// SENSORS AND BUTTONS
+const int LM393_PIN = 4;       // D4 for LM393 digital out
+const int ONE_WIRE_BUS = 23;   // D23 for DS18B20 temperature sensor
+const int BUTTON_NEXT = 26;    // D26 for cycling pages normally
+const int BUTTON_RESET = 17;   // D17 for clearing faults
+
+// BUSES
+Adafruit_MPU6050 mpu;
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+Adafruit_INA219 ina219;
+
+// DATA LOG
+unsigned long lastSensorPrint = 0;
+const long printInterval = 250; // Update sensors every 250ms (4 Hz logging)
+
+int currentPage = 1;
+int lastNextButtonState = HIGH;   
+int lastResetButtonState = HIGH;  
+
+// FAULTS
+bool faultActive = false;
+String faultReason = "";
+
+// DATA VALUES
+float accelMag = 0;
+float tempC = 0;
+float realVoltage = 0.0;
+float realCurrent = 0.0;
+float realPower = 0.0;
+
+// RPM CALC.
+volatile unsigned long pulseCount = 0;
+int currentRPM = 0;
+const int holesPerRev = 10;      // Adjusted scaling factor to bring RPM down to ~200
+
+void IRAM_ATTR countPulse() {
+  pulseCount++;
+}
+
+// DATA LOGGING
+void logDataToStorage(float uptimeSecs, int rpm, float temp, float accel) {
+  File file = LittleFS.open("/sensor_log.csv", FILE_APPEND);
+  if (file) {
+    file.print(uptimeSecs, 2);
+    file.print(",");
+    file.print(rpm);
+    file.print(",");
+    file.print(temp, 1);
+    file.print(",");
+    file.println(accel, 2);
+    file.close();
+  } else {
+    Serial.println("ERROR: Failed to open file for appending");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // FILE STORAGE
+  if(!LittleFS.begin(true)){
+    Serial.println("An Error has occurred while mounting LittleFS");
+  } else {
+    Serial.println("LittleFS mounted successfully");
+    
+    // BOOT WIPE
+    if (LittleFS.exists("/sensor_log.csv")) {
+      LittleFS.remove("/sensor_log.csv");
+      Serial.println("Old flash log wiped successfully.");
+    }
+
+    // NEW FILES
+    File file = LittleFS.open("/sensor_log.csv", FILE_WRITE);
+    if (file) {
+      file.println("Uptime_s,RPM,Temp_C,Accel_ms2");
+      file.close();
+    }
+  }
+
+  // SENSORS INITALIZING
+  Wire.begin(21, 22);
+
+  // Initialize OLED Display
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    while(1);
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  // CUSTOM START UP
+  display.setCursor(0, 10);
+  display.println(F("     PREDICTIVE    "));
+  display.println(F("    MAINTENANCE    "));
+  display.println(F("       SYSTEM      "));
+  display.println(F("    LOADING...     "));
+  display.display();
+  delay(5000);
+
+  // GPIO PINS
+  pinMode(LM393_PIN, INPUT_PULLUP);
+  pinMode(BUTTON_NEXT, INPUT_PULLUP);
+  pinMode(BUTTON_RESET, INPUT_PULLUP);
+
+  // LM393
+  attachInterrupt(digitalPinToInterrupt(LM393_PIN), countPulse, RISING);
+
+  // MPU
+  if (!mpu.begin()) {
+    Serial.println("ERROR: MPU6050 not detected!");
+    while (1) { delay(10); }
+  }
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
+  // INA
+  if (!ina219.begin()) {
+    Serial.println("ERROR: Failed to find INA219 chip");
+    while (1) { delay(10); }
+  }
+
+  // DB 
+  sensors.begin();
+  sensors.setWaitForConversion(false);
+  sensors.requestTemperatures();
+
+  Serial.println("System Initialized: 4Hz Fresh Logging Active with INA219.");
+}
+
+void loop() {
+  // PYTHON CHECK
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd == "DUMP") {
+      File file = LittleFS.open("/sensor_log.csv", FILE_READ);
+      if (file) {
+        while (file.available()) {
+          Serial.write(file.read());
+        }
+        file.close();
+      }
+    }
+  }
+
+  // 1. MODE BUTTON
+  int nextButtonState = digitalRead(BUTTON_NEXT);
+  if (nextButtonState == LOW && lastNextButtonState == HIGH) {
+    currentPage++;       
+    if (currentPage > 4) {
+      currentPage = 1;
+    }
+    delay(50); 
+  }
+  lastNextButtonState = nextButtonState;
+
+  // 2. RESET BUTTON
+  int resetButtonState = digitalRead(BUTTON_RESET);
+  if (resetButtonState == LOW && lastResetButtonState == HIGH) {
+    if (faultActive) {
+      faultActive = false; 
+      Serial.println("System Reset: Fault cleared by operator via D17.");
+    }
+    delay(50); 
+  }
+  lastResetButtonState = resetButtonState;
+
+  // SENSOR READINGS
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastSensorPrint >= printInterval) {
+    lastSensorPrint = currentMillis;
+
+    // RPM CALC.
+    noInterrupts(); 
+    unsigned long pulses = pulseCount;
+    pulseCount = 0; 
+    interrupts();
+    currentRPM = (pulses * 60 * 4) / holesPerRev; 
+
+    // INA VALUES
+    realVoltage = ina219.getBusVoltage_V();
+    realCurrent = ina219.getCurrent_mA() / 1000.0; // Convert mA to Amps
+    realPower = realVoltage * realCurrent;        // Calculated real power (Watts)
+
+    // DB & MPU VALUES
+    tempC = sensors.getTempCByIndex(0);
+    sensors.requestTemperatures();
+
+    sensors_event_t a, g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    accelMag = sqrt(a.acceleration.x * a.acceleration.x +  
+                    a.acceleration.y * a.acceleration.y +  
+                    a.acceleration.z * a.acceleration.z);
+
+    // FAULT THRESHOLD
+    if (accelMag > 11.7 || accelMag < 8.5) {
+      faultActive = true;
+      faultReason = "VIBRATION\nFAULT"; 
+    }
+    else if (currentRPM > 0 && currentRPM < 100) {
+      faultActive = true;
+      faultReason = "RPM \nDROP";
+    }
+    else if (tempC != DEVICE_DISCONNECTED_C && tempC > 45.0) {
+      faultActive = true;
+      faultReason = "THERMAL\nFAULT"; 
+    }
+
+    // SAVE VALUES TO FLASH
+    float uptimeSecsFloat = currentMillis / 1000.0;
+    logDataToStorage(uptimeSecsFloat, currentRPM, tempC, accelMag);
+  }
+
+  unsigned long uptimeSeconds = millis() / 1000;
+  unsigned long uptimeMins = uptimeSeconds / 60;
+  unsigned long displaySecs = uptimeSeconds % 60;
+
+  // OLED RENDER
+  display.clearDisplay();
+  display.setCursor(0, 0);
+
+  if (faultActive) {
+    // WARNING SCREEN
+    display.setTextSize(2);
+    display.println(F("WARNING"));
+    
+    display.setTextSize(2);
+    display.println(faultReason); 
+    
+    display.setTextSize(1);
+    display.print(F("RESET SYSTEM"));
+  } 
+  else {
+    // STANDARD SCREENS
+    display.setTextSize(1);
+    display.println(F("PREDICTIVE SYSTEM"));
+    display.print(F("--- PAGE ")); display.print(currentPage); display.println(F("/4 ---"));
+    display.println(F("---------------------"));
+
+    if (currentPage == 1) {
+      display.print(F("V: ")); display.print(realVoltage, 2); display.println(F(" V"));
+      display.print(F("I: ")); display.print(realCurrent, 2); display.println(F(" A"));
+      display.print(F("P: ")); display.print(realPower, 2); display.println(F(" W"));
+      display.println(F("Metric: LOAD LIVE"));
+    } 
+    else if (currentPage == 2) {
+      display.print(F("Accel: ")); display.print(accelMag, 1); display.println(F(" m/s^2"));
+      display.print(F("RPM: ")); display.println(currentRPM);
+      display.println(F("Status: NORMAL"));
+      display.println(F("Metric: "));
+      display.println(F("VIBRATION SAFE"));
+    } 
+    else if (currentPage == 3) {
+      display.print(F("Temp: ")); 
+      if (tempC == DEVICE_DISCONNECTED_C) {
+        display.println(F("ERR"));
+      } else {
+        display.print(tempC, 1); display.println(F(" C"));
+      }
+      display.println(F("Status: NORMAL"));
+      display.println(F("Metric: THERMAL SAFE"));
+    } 
+    else if (currentPage == 4) {
+      display.print(F("Uptime: ")); 
+      display.print(uptimeMins); display.print(F("m ")); 
+      display.print(displaySecs); display.println(F("s"));
+      display.println(F("ESP32: HEALTHY"));
+      display.println(F("Metric: CORE OPTIMAL"));
+    }
+  }
+
+  display.display();
+}
