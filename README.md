@@ -29,7 +29,7 @@ View the video files (`RPM.mp4`, `ACCELERATION.mp4`, and `TEMPERATURE.mp4`) in t
 
 ## System Resilience & Fallback Mode
 
-In the event of physical peripheral disruption, the firmware supports an integrated serial simulation mode (triggered via `RUN`). This ensures continuous data acquisition, threshold monitoring, and visualization integrity without requiring a live sensor bus.
+In the event of physical peripheral disruption, the firmware supports an integrated serial data collection via ESP32. This ensures continuous data acquisition, threshold monitoring, and visualization integrity without requiring a screen to be functional as demonstrated in the video walkthroughs.
 
 ---
 
