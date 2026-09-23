@@ -1,4 +1,4 @@
-# Predictive-Monitoring-System
+# Universal Predictive Maintenance System
 
 A predictive monitoring and fault detection system utilizing an ESP32, physical telemetry hardware, and serial data acquisition for real-time sensor tracking.
 
