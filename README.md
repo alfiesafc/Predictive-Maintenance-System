@@ -6,38 +6,44 @@ A predictive monitoring and fault detection system utilizing an ESP32, physical 
 
 ## Project Overview
 
-This project demonstrates a multi-sensor data acquisition and anomaly detection pipeline. The system tracks real-time operational metrics including temperature, vibration, and motor RPM to detect anomalies, log thermal or mechanical instabilities, and trigger visual warning alerts[cite: 6, 7, 8].
+This project demonstrates a multi-sensor data acquisition and anomaly detection pipeline. The system tracks real-time operational metrics including temperature, vibration, and motor RPM to detect anomalies, log thermal or mechanical instabilities, and trigger visual warning alerts.
 
 ---
 
 ## Hardware & Rig Demonstration
 
-> NOTE: *The video playback is set to speed up to be ample to be uploaded within github's 25mb file limit*[cite: 9]
+> NOTE: *The video playback is set at 2x speed in order to comply with GitHub's upload limit.*
 
-View this demonstration under the video files section of this repository[cite: 6, 7, 8].
+View the video files (`RPM.mp4`, `ACCELERATION.mp4`, and `TEMPERATURE.mp4`) in the repository for the respective sensor demonstrations.
 
 ---
 
 ## Features
 
-* **Real-Time Sensor Monitoring:** Live temperature, vibration ($m/s^2$), and motor RPM tracking[cite: 6, 7, 8].
-* **Fault Detection & Warnings:** Automatically flags abnormal behavior such as thermal instability, sudden RPM drops, or vibration faults[cite: 6, 7, 8].
-* **OLED Display Interface:** Visualizes system status, normal operating metrics, and fault alerts directly on-device[cite: 8].
-* **Manual Controls:** Integrated physical `MODE` and `RESET` push buttons for system control and recovery[cite: 4, 8].
+* **Real-Time Sensor Monitoring:** Live temperature, vibration ($\text{m/s}^2$), and motor RPM tracking.
+* **Fault Detection & Warnings:** Automatically flags abnormal behavior such as thermal instability, sudden RPM drops, or vibration faults.
+* **OLED Display Interface:** Visualizes system status, normal operating metrics, and fault alerts directly on-device.
+* **Manual & Serial Controls:** Integrated physical push buttons alongside a robust serial command pipeline (`RUN`) supporting fallback simulation modes.
+
+---
+
+## System Resilience & Fallback Mode
+
+In the event of physical peripheral disruption, the firmware supports an integrated serial simulation mode (triggered via `RUN`). This ensures continuous data acquisition, threshold monitoring, and visualization integrity without requiring a live sensor bus.
 
 ---
 
 ## Written Report
 
-* **Technical Write-up:** Detailed documentation of system architecture and validation.
-* **Hardware Analysis:** Documentation of the integration between the ESP32 microcontroller, sensors, and motor components[cite: 6, 7, 8].
+* **Technical Write-up:** Detailed documentation of system architecture, validation, and graceful degradation strategies.
+* **Hardware Analysis:** Documentation of the integration between the ESP32 microcontroller, sensors, and motor components.
 * **Data Analysis:** Breaks down the findings of the telemetry system including threshold limits and fault triggers.
-* **Visualisation:** Thorough view through graphical representation, the physical rig structure, and the circuitry feeding the project[cite: 1, 2, 3, 4].
 
-View documentation files within this repository.
+View `PMS.docx` for the complete detailed report validating the project.
 
 ---
 
 ## Scripts
 
-* `project_A.ino` - ESP32 C++ firmware consisting of handling data collection, sensor parsing, and serial output[cite: 6, 7].
+* `esp32_firmware`: C++ firmware for the ESP32 handling data collection, sensor parsing, threshold logic, and serial telemetry output.
+* `python_dashboard`: Data acquisition and visualization pipeline outlining live metrics and potential faults.
